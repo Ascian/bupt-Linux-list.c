@@ -78,7 +78,7 @@ typedef enum Error
 
 long min_size = FILE_SIZE_MIN;                // -l option
 long max_size = FILE_SIZE_MAX;                // -h option
-long time_limit = TIME_MAX / 3600;            // -m option
+long time_limit = TIME_MAX / (3600 * 24);     // -m option
 char is_all = FALSE;                          // -a option
 char is_recursive = FALSE;                    // -r option
 int path_amount = 1;                          // amount of path argument
@@ -314,7 +314,7 @@ const Error PathClassify(Path *file_paths, Path *dict_paths)
 }
 
 // transform the day to second
-#define DAY_TO_SECOND(day) ((day)*3600)
+#define DAY_TO_SECOND(day) ((day)*3600*24)
 
 // Check the file is valid to print
 // param:
