@@ -110,10 +110,12 @@ void ErrorPrint(char *error_str, const Error error)
 //     x - the argument to check
 #define IS_OPTION(x) ((x)[0] == '-' && (x)[1] != '\0')
 
-// transform the argument to long type
+// Parse the option argument after the option
 // param:
 //     val - the variable to store the result
-//     argv - the argument to transform
+//     index - the index of the option
+//     argc - the amount of arguments
+//     argv - the argument to parse
 #define PARSE_OPTION_ARGUMENT(val, index, argc, argv)      \
     do                                                     \
     {                                                      \
@@ -223,7 +225,7 @@ void CmdArgumentAnalyze(const int argc, const char **const argv)
     ERROR_CHECK(CmdPathAnalyze(&i, argc, argv));
 }
 
-// Path information
+// Path node information
 typedef struct Path
 {
     struct stat st;
@@ -343,6 +345,7 @@ const Error DictList(const char *const path)
                 {
                     printf("%s\n", subpath);
                 }
+                // Ignore the '.' and '..' directories
                 if (strcmp(dp->d_name, ".") != 0 && strcmp(dp->d_name, "..") != 0)
                 {
                     DictList(subpath);
