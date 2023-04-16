@@ -1,14 +1,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
+#include <time.h>
+#include <dirent.h>
+#include <limits.h>
 #include <sys/stat.h>
 
-#define SIZE_MAX LONG_MAX        // The maximum size of a file
-#define SIZE_MIN 0               // The minimum size of a file
-#define TIME_MAX LONG_MAX        // The maximum time limit
-#define PATH_MAX 4096            // The maximum length of a path
-#define ERROR_MESSAGE_LENGTH 255 // The maximum length of an error message
+#define SIZE_MAX LONG_MAX             // The maximum size of a file
+#define SIZE_MIN 0                    // The minimum size of a file
+#define TIME_MAX LONG_MAX             // The maximum time limit
+#define ERROR_MESSAGE_LENGTH PATH_MAX // The maximum length of an error message
+
+#define TRUE 1
+#define FALSE 0
+
+typedef char Status;
 
 // Error type
 typedef enum Error
@@ -20,6 +26,7 @@ typedef enum Error
     ARGUMENT_TOO_LARGE,
     PATH_TOO_LONG,
     PATH_INVALID,
+    PATH_UNACCESSIBLE,
 } Error;
 
 long min_size = SIZE_MIN;                     // -l option
@@ -53,7 +60,7 @@ int main(int argc, char **argv)
 // param:
 //    error_str - the string to store the error message
 //    error - the error code
-void ErrorPrint(char *error_str, const Error error);
+void ErrorPrint(char *error_str, const Error error)
 {
     switch (error)
     {
@@ -66,14 +73,16 @@ void ErrorPrint(char *error_str, const Error error);
 // Check if the error is not SUCCESS and print the error message
 // param:
 //     error - the error code
-#define ERROR_CHECK(error)                            \
-    if (error != SUCCESS)                             \
-    {                                                 \
-        char error_str[2 * ERROR_MESSAGE_LENGTH + 1]; \
-        ErrorPrint(error_str, error)                  \
-            fprintf(stderr, "%s", error_str);         \
-        exit(EXIT_FAILURE);                           \
+inline void ErrorCheck(const Error error)
+{
+    if (error != SUCCESS)
+    {
+        char error_str[2 * ERROR_MESSAGE_LENGTH + 1];
+        ErrorPrint(error_str, error);
+        fprintf(stderr, "%s", error_str);
+        exit(EXIT_FAILURE);
     }
+}
 
 // check the argument is a option
 // param:
@@ -153,7 +162,7 @@ const Error CmdOptionAnalyze(int *index, const int argc, const char **const argv
 //     argv - the arguments
 // return:
 //     the error code
-const Error CmdPathAnalyze(int *index, const int argc, const chat **const argv)
+const Error CmdPathAnalyze(int *index, const int argc, const char **const argv)
 {
     if (*index == argc)
     {
@@ -184,16 +193,16 @@ void CmdArgumentAnalyze(const int argc, const char **const argv)
 {
     int i;
     // Analyze options
-    ERROR_CHECK(CmdOptionAnalyze(&i, argc, argv));
+    ErrorCheck(CmdOptionAnalyze(&i, argc, argv));
     // Analyze paths
-    ERROR_CHECK(CmdPathAnalyze(&i, argc, argv));
+    ErrorCheck(CmdPathAnalyze(&i, argc, argv));
     return SUCCESS;
 }
 
 // Path information
 typedef struct Path
 {
-    stat st;
+    struct stat st;
     char *path_str;
     struct Path *next;
 } Path;
@@ -232,13 +241,125 @@ const Error PathClassify(Path *file_paths, Path *dir_paths)
     return SUCCESS;
 }
 
-const Error FileListRecursive(const char *const path)
+// transform the day to second
+#define DAY_TO_SECOND(day) ((day)*3600)
+
+// Check the file is valid to print
+// param:
+//     st - the file information
+// return:
+//     the file is valid or not
+inline const Status FileCheck(const struct stat st)
 {
+    time_t current_time;
+    time(&current_time);
+    return current_time - st.st_mtime <= DAY_TO_SECOND(time_limit) &&
+           st.st_size <= max_size && st.st_size >= min_size
 }
 
-const Error FileListNoRecursive(const char *const path)
+// List file paths
+// param:
+//     file_paths - the header of the file path list
+// return:
+//     the error code
+const Error FilePathList(const Path *file_paths)
 {
+    file_paths = file_paths->next;
+    while (file_paths != NULL)
+    {
+        if (FileCheck(file_paths->st))
+        {
+            printf("%s ", file_paths->path_str);
+        }
+        file_paths = file_paths->next;
+    }
+    return SUCCESS;
 }
+
+#define DICT_PATH_LIST(dir_statement, file_statement)                         \
+    do                                                                        \
+    {                                                                         \
+        DIR dir * = opendir(path);                                            \
+        /* Check the dictionary is accessible */                              \
+        if (!dir)                                                             \
+        {                                                                     \
+            strcpy(error_message, path);                                      \
+            return PATH_UNACCESSIBLE;                                         \
+        }                                                                     \
+                                                                              \
+        struct dirent *dp;                                                    \
+        dp = readdir(dir);                                                    \
+        while (dp != NULL)                                                    \
+        {                                                                     \
+            /* Ignore the file starts with '.' if the option -a is not set */ \
+            if (dp->d_name[0] == '.' && !is_all)                              \
+            {                                                                 \
+                continue;                                                     \
+            }                                                                 \
+            if (dp->d_type == DT_DIR)                                         \
+            {                                                                 \
+                dir_statement                                                 \
+            }                                                                 \
+            else                                                              \
+            {                                                                 \
+                struct stat st;                                               \
+                stat(subpath, &st);                                           \
+                if (FileCheck(st))                                            \
+                {                                                             \
+                    file_statement                                            \
+                }                                                             \
+            }                                                                 \
+            dp = readdir(dir);                                                \
+        }                                                                     \
+        closedir(dir);                                                        \
+        return SUCCESS;                                                       \
+    } while (0)
+
+// Recursively list all the files under the dictionary
+// param:
+//     dic_path - the dictionary path
+// return:
+//     the error code
+const Error DictPathListRecursive(const char *const path)
+{
+    DICT_PATH_LIST(
+        {
+            printf("%s\n", subpath);
+            DictPathRecursive(subpath);
+        },
+        {
+            printf("%s\n", subpath);
+        })
+}
+
+// List all the files under the dictionary
+// param:
+//     dic_path - the dictionary path
+// return:
+//     the error code
+const Error DictPathListNoRecursive(const char *const path)
+{
+    DICT_PATH_LIST(
+        {
+            printf("%.*s ", dp->d_namlen, dp->d_name);
+        },
+        {
+            printf("%.*s ", dp->d_namlen, dp->d_name);
+        })
+}
+
+#define DIR_LIST(dic_function)                         \
+    do                                                 \
+    {                                                  \
+        Path *dir_path = dir_paths->next;              \
+        while (dir_path != NULL)                       \
+        {                                              \
+            printf("%s:\n", dir_path->path_str);       \
+            ErrorCheck(dict_function(dir_path->next)); \
+            dir_path = dir_path->next;                 \
+            printf("\n\n");                            \
+        }                                              \
+    } while (0)
 
 // List files
 void FileList()
@@ -248,20 +369,37 @@ void FileList()
     Path *dir_paths = (Path *)malloc(sizeof(Path));
     file_paths->next = NULL;
     dir_paths->next = NULL;
-    ERROR_CHECK(PathClassify(file_paths, dir_paths));
+    ErrorCheck(PathClassify(file_paths, dir_paths));
 
-    if (is_recursive)
+    if (file_paths->next != NULL)
     {
-        for (int i = 0; i < path_amount; i++)
-        {
-            ERROR_CHECK(FileListRecursive(path[i]));
-        }
+        ErrorCheck(FilePathList(file_paths));
+        printf("\n\n");
     }
-    else
+
+    if (dir_paths->next != NULL)
     {
-        for (int i = 0; i < path_amount; i++)
+        if (path_amount == 1)
         {
-            ERROR_CHECK(FileListNoRecursive(path[i]));
+            if (is_recursive)
+            {
+                ErrorCheck(DictPathListRecursive(dir_paths->next));
+            }
+            else
+            {
+                ErrorCheck(DictPathListNoRecursive(dir_paths->next));
+            }
+        }
+        else
+        {
+            if (is_recursive)
+            {
+                DIR_LIST(DictPathListRecursive);
+            }
+            else
+            {
+                DIR_LIST(DictPathListNoRecursive);
+            }
         }
     }
 }
